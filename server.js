@@ -561,6 +561,7 @@ async function scheduleNextScan() {
 function startKeepAlive() {
   const targets = [
     ['RAMCE',    'https://forex-ramce.onrender.com'],
+    ['NEXUS', 'https://nexus-stocks-server.onrender.com'],
     ['ULTIMATE', 'https://forex-ultimate-server.onrender.com']
   ];
   setInterval(async () => {
