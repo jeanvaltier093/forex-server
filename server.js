@@ -2,27 +2,27 @@
 const express = require('express');
 const fetch = require('node-fetch');
 const app = express();
-
+ 
 const TWELVE_KEY = process.env.TWELVE_DATA_API_KEY;
 const JBIN_KEY   = process.env.JBIN_KEY;
 const JBIN_ID    = process.env.JBIN_ID;
 const PORT       = process.env.PORT || 3000;
-
+ 
 if (!TWELVE_KEY || !JBIN_KEY || !JBIN_ID) {
   console.error('Variables manquantes');
   process.exit(1);
 }
-
+ 
 let activeTrades   = [];
 let history        = [];
 let lastSignalTime = {};
-
+ 
 const PAIRS = [
   'EUR/USD','GBP/USD','USD/JPY','USD/CHF',
   'AUD/USD','NZD/USD','USD/CAD','EUR/GBP'
 ];
 const ANTI_CLUSTER = 24 * 60 * 60 * 1000;
-
+ 
 // ─── JSONBIN ──────────────────────────────────────────────────────────────────
 async function loadCloud() {
   try {
@@ -38,7 +38,7 @@ async function loadCloud() {
     }
   } catch (e) { console.error('loadCloud:', e.message); }
 }
-
+ 
 async function syncCloud() {
   try {
     await fetch(`https://api.jsonbin.io/v3/b/${JBIN_ID}`, {
@@ -49,7 +49,7 @@ async function syncCloud() {
     console.log('☁️  Cloud sauvegardé');
   } catch (e) { console.error('syncCloud:', e.message); }
 }
-
+ 
 // ─── MARCHÉ OUVERT ? ─────────────────────────────────────────────────────────
 function isMarketOpen() {
   const now = new Date();
@@ -64,7 +64,7 @@ function isMarketOpen() {
   if (parisDay === 1 && parisHour < 1) return false;
   return true;
 }
-
+ 
 // ─── INDICATEURS ─────────────────────────────────────────────────────────────
 function calcEMA(d, p) {
   if (d.length <= p) return d.map(() => d[d.length-1]);
@@ -119,7 +119,7 @@ function calcMACDFull(closes) {
     prevHistogram: hist.length > 1 ? hist[hist.length - 2] : hist[0]
   };
 }
-
+ 
 // ─── MOTEUR SIGNAUX ───────────────────────────────────────────────────────────
 function computeSignalAnalyzer(candles, pair) {
   if (candles.length < 60) return null;
@@ -130,38 +130,38 @@ function computeSignalAnalyzer(candles, pair) {
   const price  = closes[n];
   const dec    = pair.includes('JPY') ? 3 : 5;
   if (n < 50) return null;
-
+ 
   const macd       = calcMACDFull(closes);
   const priceTrend = closes[n] > closes[n - 3] ? 1 : -1;
   const macdTrend  = macd.macdLine > macd.prevMacdLine ? 1 : -1;
   const macdDiv    = priceTrend !== macdTrend ? -priceTrend : 0;
-
+ 
   const high50  = Math.max(...highs.slice(-50));
   const low50   = Math.min(...lows.slice(-50));
   const rng50   = high50 - low50;
   const fib382  = low50 + rng50 * 0.382;
   const fib618  = low50 + rng50 * 0.618;
   const fibZone = price >= fib382 && price <= fib618;
-
+ 
   const isInsideBar   = n >= 1 && highs[n] < highs[n-1] && lows[n] > lows[n-1];
   const insideBarBull = isInsideBar && closes[n] > closes[n-1];
-
+ 
   const rH = highs.slice(-25), rL = lows.slice(-25);
   const arUp   = (24 - rH.indexOf(Math.max(...rH))) / 24 * 100;
   const arDown = (24 - rL.indexOf(Math.min(...rL))) / 24 * 100;
   const aroonBull = arUp > arDown;
-
+ 
   const stochH = Math.max(...highs.slice(-14));
   const stochL = Math.min(...lows.slice(-14));
   const stochK = stochH === stochL ? 50 : ((price - stochL) / (stochH - stochL)) * 100;
-
+ 
   const macdMomNeg = macd.histogram < macd.prevHistogram;
   const nearRes    = price > Math.max(...highs.slice(-30)) * 0.995;
-
+ 
   const atrVal = calcATR(highs, lows, closes);
   const slPips = atrVal * 1.5;
   const tpPips = slPips * 1.5;
-
+ 
   if (macdDiv === 1 && fibZone && insideBarBull && aroonBull) {
     return {
       pair, direction: 'BUY',
@@ -180,29 +180,29 @@ function computeSignalAnalyzer(candles, pair) {
       timestamp: new Date().toISOString()
     };
   }
-
+ 
   const macdCross = macd.histogram > 0 ? 1 : -1;
   const ema50arr  = calcEMA(closes, 50);
   const ema200arr = calcEMA(closes, 200);
   const ema50_200 = ema50arr[ema50arr.length-1] < ema200arr[ema200arr.length-1];
-
+ 
   const pH = highs[n-1], pL = lows[n-1], pC = closes[n-1];
   const pp = (pH + pL + pC) / 3;
   const r1 = 2 * pp - pL;
   const nearPivot = Math.abs(price-pp)/(pp||1) < 0.0015 || Math.abs(price-r1)/(r1||1) < 0.0015;
-
+ 
   const h50s = Math.max(...highs.slice(-50));
   const l50s = Math.min(...lows.slice(-50));
   const fib382sell = l50s + (h50s - l50s) * 0.382;
   const nearFib382 = Math.abs(price - fib382sell) / (fib382sell||1) < 0.003;
-
+ 
   let obv10val = 0;
   for (let i = Math.max(1, n-9); i <= n; i++) {
     const b = Math.abs(closes[i] - closes[i-1]) * 10000;
     obv10val += closes[i] > closes[i-1] ? b : -b;
   }
   const obv10Bear = obv10val < 0;
-
+ 
   if (macdCross === -1 && nearFib382 && nearPivot && ema50_200 && obv10Bear) {
     return {
       pair, direction: 'SELL',
@@ -221,10 +221,10 @@ function computeSignalAnalyzer(candles, pair) {
       timestamp: new Date().toISOString()
     };
   }
-
+ 
   return null;
 }
-
+ 
 // ─── FETCH BOUGIES ────────────────────────────────────────────────────────────
 async function fetchCandles(pair, outputsize = 500) {
   try {
@@ -236,14 +236,24 @@ async function fetchCandles(pair, outputsize = 500) {
     return d.values.reverse().slice(0, -1); // chronologique, retire bougie en cours
   } catch (e) { console.error(`fetchCandles ${pair}:`, e.message); return null; }
 }
-
-// ─── VÉRIFICATION TP/SL PAR HIGH/LOW DES BOUGIES ─────────────────────────────
-// Pour chaque trade actif, on récupère les bougies depuis la date d'entrée
-// et on vérifie si le high ou low de chaque bougie a touché le TP ou SL
+ 
+// ─── FETCH BOUGIES 30MIN ─────────────────────────────────────────────────────
+async function fetchCandles30(pair) {
+  try {
+    const r = await fetch(
+      `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(pair)}&interval=30min&outputsize=300&apikey=${TWELVE_KEY}`
+    );
+    const d = await r.json();
+    if (!d.values || d.status === 'error') return null;
+    return d.values.reverse().slice(0, -1);
+  } catch (e) { console.error(`fetchCandles30 ${pair}:`, e.message); return null; }
+}
+ 
+// ─── VÉRIFICATION TP/SL — BOUGIES 30MIN (filtre strict post-entrée) ──────────
 async function checkTrades() {
   if (!activeTrades.length) return;
   let changed = false;
-
+ 
   for (const trade of [...activeTrades]) {
     try {
       const tp     = parseFloat(trade.tp);
@@ -252,96 +262,63 @@ async function checkTrades() {
       const isJPY  = trade.pair.includes('JPY');
       const pipDiv = isJPY ? 0.01 : 0.0001;
       const dec    = isJPY ? 3 : 5;
-      const entryDate = new Date(trade.addedAt || trade.timestamp);
-
-      // Récupérer les bougies 4h récentes
-      const candles = await fetchCandles(trade.pair, 200);
+ 
+      const entryTs = new Date(trade.addedAt || trade.timestamp).getTime();
+      if (isNaN(entryTs)) { console.log(`⚠️  ${trade.pair} — date invalide`); continue; }
+ 
+      const candles = await fetchCandles30(trade.pair);
       await sleep(600);
-
-      if (!candles || !candles.length) {
-        console.log(`⚠️  ${trade.pair} — bougies indisponibles`);
+      if (!candles || !candles.length) { console.log(`⚠️  ${trade.pair} — bougies 30min indisponibles`); continue; }
+ 
+      // Filtre strict : uniquement bougies dont le DÉBUT est APRÈS l'entrée
+      const postEntry = candles.filter(c => new Date(c.datetime).getTime() > entryTs);
+ 
+      if (!postEntry.length) {
+        const last = candles[candles.length - 1];
+        console.log(`⏸  ${trade.pair} — en attente bougie 30min post-entrée | TP: ${(Math.abs(last.close-tp)/pipDiv).toFixed(0)}p | SL: ${(Math.abs(last.close-sl)/pipDiv).toFixed(0)}p`);
         continue;
       }
-
-      // Filtrer les bougies APRÈS la date d'entrée du trade
-      const candlesAfterEntry = candles.filter(c => new Date(c.datetime) >= entryDate);
-
-      if (!candlesAfterEntry.length) {
-        console.log(`⏸  ${trade.pair} — aucune bougie après l'entrée`);
-        continue;
-      }
-
+ 
       let closed = false, result = null, closePrice = null, closeDate = null;
-
-      // Parcourir chaque bougie chronologiquement et vérifier high/low
-      for (const candle of candlesAfterEntry) {
+ 
+      for (const candle of postEntry) {
         const high = parseFloat(candle.high);
         const low  = parseFloat(candle.low);
-
         if (trade.direction === 'BUY') {
-          if (high >= tp) {
-            // TP touché sur ce candle
-            closed = true; result = 'WIN'; closePrice = tp;
-            closeDate = candle.datetime;
-            break;
-          }
-          if (low <= sl) {
-            // SL touché sur ce candle
-            closed = true; result = 'LOSS'; closePrice = sl;
-            closeDate = candle.datetime;
-            break;
-          }
-        } else { // SELL
-          if (low <= tp) {
-            closed = true; result = 'WIN'; closePrice = tp;
-            closeDate = candle.datetime;
-            break;
-          }
-          if (high >= sl) {
-            closed = true; result = 'LOSS'; closePrice = sl;
-            closeDate = candle.datetime;
-            break;
-          }
+          if (high >= tp) { closed=true; result='WIN';  closePrice=tp; closeDate=candle.datetime; break; }
+          if (low  <= sl) { closed=true; result='LOSS'; closePrice=sl; closeDate=candle.datetime; break; }
+        } else {
+          if (low  <= tp) { closed=true; result='WIN';  closePrice=tp; closeDate=candle.datetime; break; }
+          if (high >= sl) { closed=true; result='LOSS'; closePrice=sl; closeDate=candle.datetime; break; }
         }
       }
-
+ 
       if (closed) {
-        const pips = ((trade.direction === 'BUY' ? closePrice - en : en - closePrice) / pipDiv).toFixed(1);
-        console.log(`${result === 'WIN' ? '✅ GAIN' : '❌ PERTE'} ${trade.pair} ${trade.direction} — ${pips > 0 ? '+' : ''}${pips} pips | bougie: ${closeDate}`);
-        history.unshift({
-          ...trade,
-          result,
-          closePrice: closePrice.toFixed(dec),
-          pips,
-          closedAt: closeDate ? new Date(closeDate).toISOString() : new Date().toISOString()
-        });
+        const pips = ((trade.direction==='BUY'?closePrice-en:en-closePrice)/pipDiv).toFixed(1);
+        console.log(`${result==='WIN'?'✅':'❌'} ${trade.pair} ${trade.direction} — ${pips>0?'+':''}${pips}p | 30min: ${closeDate}`);
+        history.unshift({ ...trade, result, closePrice: closePrice.toFixed(dec), pips, closedAt: new Date(closeDate).toISOString() });
         if (history.length > 100) history = history.slice(0, 100);
         activeTrades = activeTrades.filter(t => t.pair !== trade.pair);
         changed = true;
       } else {
-        // Afficher la distance au TP/SL avec la dernière bougie
-        const last = candlesAfterEntry[candlesAfterEntry.length - 1];
-        const cur  = parseFloat(last.close);
-        const distTP = Math.abs(cur - tp) / pipDiv;
-        const distSL = Math.abs(cur - sl) / pipDiv;
-        console.log(`⏸  ${trade.pair} ${trade.direction} | prix: ${cur} | TP: ${tp} (${distTP.toFixed(0)}p) | SL: ${sl} (${distSL.toFixed(0)}p) | ${candlesAfterEntry.length} bougies vérifiées`);
+        const last = postEntry[postEntry.length - 1];
+        console.log(`⏸  ${trade.pair} ${trade.direction} | ${last.close} | TP ${(Math.abs(last.close-tp)/pipDiv).toFixed(0)}p | SL ${(Math.abs(last.close-sl)/pipDiv).toFixed(0)}p | ${postEntry.length} bougies 30min`);
       }
-
+ 
     } catch (e) { console.error(`checkTrades ${trade.pair}:`, e.message); }
   }
-
   if (changed) await syncCloud();
 }
-
+ 
 // ─── SCAN PRINCIPAL ───────────────────────────────────────────────────────────
 async function runScan() {
   console.log(`\n🔄 SCAN — ${new Date().toLocaleString('fr-FR')}`);
-
+ 
   if (!isMarketOpen()) {
     console.log('🚫 Marché fermé (weekend) — scan ignoré');
     return;
   }
-
+ 
   const now = new Date();
   const parisOffset = isDST(now) ? 2 : 1;
   const parisHour = (now.getUTCHours() + parisOffset) % 24;
@@ -353,14 +330,14 @@ async function runScan() {
     await checkTrades();
     return;
   }
-
+ 
   await loadCloud();
-
+ 
   const nowMs = Date.now();
   const activePairs = activeTrades.map(t => t.pair);
   let signalsFound = 0;
   let changed = false;
-
+ 
   for (const pair of PAIRS) {
     if (activePairs.includes(pair)) {
       console.log(`⏸  ${pair} — trade actif`);
@@ -387,12 +364,12 @@ async function runScan() {
       await sleep(600);
     } catch (e) { console.error(`scan ${pair}:`, e.message); }
   }
-
+ 
   console.log(`✅ Scan terminé — ${signalsFound} signal(s)`);
   await checkTrades();
   if (changed) await syncCloud();
 }
-
+ 
 // ─── HTTP ─────────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({
@@ -412,7 +389,7 @@ app.get('/analyzer', (req, res) => {
 app.get('/status', (req, res) => {
   res.json({ activeTrades, history: history.slice(0, 10), lastSignalTime });
 });
-
+ 
 // ─── SCHEDULING ───────────────────────────────────────────────────────────────
 function getNextInterval() {
   const now = new Date();
@@ -427,7 +404,7 @@ function getNextInterval() {
   if (parisHour >= 8 && parisHour < 22) return 15 * 60 * 1000;
   return 60 * 60 * 1000;
 }
-
+ 
 function isDST(date) {
   const month = date.getUTCMonth() + 1;
   if (month >= 4 && month <= 9) return true;
@@ -436,18 +413,18 @@ function isDST(date) {
   if (month === 10) return date.getUTCDate() < lastSundayOf(date.getUTCFullYear(), 10);
   return false;
 }
-
+ 
 function lastSundayOf(year, month) {
   const d = new Date(Date.UTC(year, month, 0));
   return d.getUTCDate() - d.getUTCDay();
 }
-
+ 
 async function scheduleNextScan() {
   const interval = getNextInterval();
   console.log(`⏱  Prochain scan dans ${Math.round(interval / 60000)} min`);
   setTimeout(async () => { await runScan(); scheduleNextScan(); }, interval);
 }
-
+ 
 function startKeepAlive() {
   const targets = [
     ['RAMCE',    'https://forex-ramce.onrender.com'],
@@ -464,7 +441,7 @@ function startKeepAlive() {
   }, 10 * 60 * 1000);
   console.log('🏓 Keep-alive actif → RAMCE + ULTIMATE pingés toutes les 10 min');
 }
-
+ 
 async function start() {
   console.log('🚀 Forex Signal Pro — Serveur démarré');
   await loadCloud();
@@ -473,6 +450,7 @@ async function start() {
   startKeepAlive();
   app.listen(PORT, () => console.log(`🌐 Port ${PORT}`));
 }
-
+ 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 start().catch(console.error);
+ 
